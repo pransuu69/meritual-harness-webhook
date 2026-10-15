@@ -1,0 +1,47 @@
+name: Meritual Adversarial Ingestion CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  verify:
+    name: Adversarial Burst & MicroVM Ledger Verification
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Run Unit & Sieve Benchmarks
+        run: |
+          go test -v -bench=. -benchmem ./internal/...
+
+      - name: Compile Production Binaries
+        run: |
+          mkdir -p bin
+          go build -ldflags="-s -w" -o bin/server ./cmd/server
+          go build -ldflags="-s -w" -o bin/harness ./cmd/harness
+
+      - name: Execute 10,000 Adversarial Webhook Ingestion Proof
+        env:
+          MAX_MEMORY_MB: 64
+          MAX_LATENCY_P99_MS: 35
+          PORT: 8080
+        run: |
+          ./bin/server -port 8080 &
+          SERVER_PID=$!
+          sleep 1
+
+          # Run 10k burst with 30% forged injection
+          ./bin/harness -server http://127.0.0.1:8080 -total 10000 -adversary-rate 0.30 -concurrency 50
+
+          kill -9 $SERVER_PID
